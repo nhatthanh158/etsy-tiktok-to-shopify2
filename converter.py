@@ -80,17 +80,22 @@ def apply_markup(price, markup_pct: float):
     except Exception:
         return ""
 
-def calc_compare_at(price_value, pct: float):
-    """price_value có thể là số hoặc chuỗi; trả về '' nếu pct==0 hoặc price trống."""
+def calc_compare_at(price_value, discount_pct: float):
+    """
+    discount_pct = % muốn giảm (vd 30 nghĩa là sale 30%).
+    Compare-at = price / (1 - discount_pct/100).
+    Trả '' nếu không đặt compare-at.
+    """
     p = parse_price(price_value)
     if p is None or (isinstance(p, float) and math.isnan(p)):
         return ""
-    if pct is None or float(pct) == 0.0:
+    if discount_pct is None or float(discount_pct) <= 0:
         return ""
-    try:
-        return round(p * (1 + float(pct) / 100.0), 2)
-    except Exception:
-        return ""
+    d = float(discount_pct) / 100.0
+    if d >= 1.0:
+        return ""  # tránh chia cho 0 (>=100% không hợp lệ)
+    return round(p / (1.0 - d), 2)
+
 
 def _finalize(df_rows: List[Dict[str, Any]]) -> pd.DataFrame:
     if not df_rows:

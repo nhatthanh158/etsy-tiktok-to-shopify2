@@ -80,6 +80,18 @@ def apply_markup(price, markup_pct: float):
     except Exception:
         return ""
 
+def calc_compare_at(price_value, pct: float):
+    """price_value có thể là số hoặc chuỗi; trả về '' nếu pct==0 hoặc price trống."""
+    p = parse_price(price_value)
+    if p is None or (isinstance(p, float) and math.isnan(p)):
+        return ""
+    if pct is None or float(pct) == 0.0:
+        return ""
+    try:
+        return round(p * (1 + float(pct) / 100.0), 2)
+    except Exception:
+        return ""
+
 def _finalize(df_rows: List[Dict[str, Any]]) -> pd.DataFrame:
     if not df_rows:
         return pd.DataFrame(columns=SHOPIFY_BASE_COLS)
@@ -91,12 +103,12 @@ def _finalize(df_rows: List[Dict[str, Any]]) -> pd.DataFrame:
             df[k] = ""
     return df[ordered]
 
-# ===== Token matcher (để gán đúng SKU cho Option1) =====
+# ===== Token matcher =====
 TOKEN_PATTERNS = [
-    r"\b\d{1,2}\s*[tTmM]\b",                     # 6M, 12M, 2T...
-    r"\b(?:XS|S|M|L|XL|XXL|3XL|4XL)\b",          # size chữ
-    r"\b\d{1,2}\s*[x×]\s*\d{1,2}\b",             # 11x14, 12 x 16...
-    r"\bA\d\b",                                  # A3, A2, A1...
+    r"\b\d{1,2}\s*[tTmM]\b",
+    r"\b(?:XS|S|M|L|XL|XXL|3XL|4XL)\b",
+    r"\b\d{1,2}\s*[x×]\s*\d{1,2}\b",
+    r"\bA\d\b",
 ]
 TOKEN_RE = re.compile("|".join(TOKEN_PATTERNS), re.I)
 
@@ -129,16 +141,18 @@ def convert_etsy_to_shopify(
     markup_pct: float = 0.0,
     variant_price_map: Optional[Dict[str, Any]] = None,
     apply_markup_on_map: bool = False,
+    compare_at_markup_pct: float = 0.0,
 ) -> pd.DataFrame:
     """
     Etsy CSV:
     - Giữ mọi biến thể (kể cả Digital/PNG/PDF...) — biến thể số → SKU rỗng
     - SKU biến thể vật lý: map theo Option1 với token-matching
     - Nếu có variant_price_map: set giá theo Option1 (ưu tiên exact, rồi token), fallback dùng PRICE + markup
+    - Compare-at = Variant Price × (1 + compare_at_markup_pct/100) nếu % > 0
     """
     etsy = pd.read_csv(file_like_or_path, engine="python")
 
-    # 🔧 CHUẨN HOÁ HEADER → UPPERCASE để không lệch tên cột
+    # 🔧 Chuẩn hoá header
     etsy.columns = [str(c).strip().upper() for c in etsy.columns]
     def getU(row, key, default=""):
         return row.get(key, default)
@@ -173,7 +187,7 @@ def convert_etsy_to_shopify(
         desc  = getU(r, "DESCRIPTION", "")
         price = getU(r, "PRICE", "")
 
-        # Lấy ảnh
+        # Ảnh
         images = []
         for c in image_cols:
             v = r.get(c)
@@ -188,7 +202,6 @@ def convert_etsy_to_shopify(
         opt2_all  = split_list_field(getU(r, "VARIATION 2 VALUES"))
         skus_all  = split_list_field(getU(r, "SKU"))
 
-        # Không loại trừ gì
         def keep(v): return str(v).strip().lower() not in EXCLUDE_OPTIONS
         opt1 = [v for v in opt1_all if keep(v)] or ["Default"]
         opt2 = [v for v in opt2_all if keep(v)]
@@ -196,7 +209,7 @@ def convert_etsy_to_shopify(
         if len(opt1) == 0:
             continue
 
-        # Map SKU theo Option1 (vật lý)
+        # Map SKU theo Option1 (chỉ cho biến thể vật lý)
         keep_mask1 = [keep(v) for v in opt1_all] if opt1_all else []
         if opt1_all and len(skus_all) == len(opt1_all):
             skus_by_pos = [s for s, k in zip(skus_all, keep_mask1) if k]
@@ -255,16 +268,15 @@ def convert_etsy_to_shopify(
             return default_price
 
         v_idx = 0
-        # ---- sinh row
         for i, o1 in enumerate(opt1):
             o1_sku = matched_skus[i] if i < len(matched_skus) else ""
             vprice = resolve_variant_price(str(o1)) if variant_price_map else default_price
+            vcompare = calc_compare_at(vprice, compare_at_markup_pct)
 
             if have_opt2:
                 for o2 in opt2:
                     row = base_row()
                     if v_idx == 0:
-                        # luôn có Title an toàn
                         listing_id = getU(r, "LISTING ID", "")
                         safe_title = title if str(title).strip() else (f"ETSY {listing_id}" if str(listing_id).strip() else handle.replace("-", " ").title())
                         row.update({"Title": safe_title, "Body (HTML)": desc})
@@ -280,6 +292,7 @@ def convert_etsy_to_shopify(
                         "Option2 Value": str(o2) if opt2_name else "",
                         "Variant SKU": sku_val,
                         "Variant Price": vprice,
+                        "Variant Compare At Price": vcompare,
                     })
                     rows.append(row); v_idx += 1
             else:
@@ -297,17 +310,22 @@ def convert_etsy_to_shopify(
                     "Option1 Value": str(o1),
                     "Variant SKU": sku_val,
                     "Variant Price": vprice,
+                    "Variant Compare At Price": vcompare,
                 })
                 rows.append(row); v_idx += 1
 
-        # Ảnh bổ sung
         for pos, url in enumerate(images[1:], start=2):
             rows.append({"Handle": handle, "Image Src": url, "Image Position": pos})
 
     return _finalize(rows)
 
 # ================= TikTok → Shopify =================
-def convert_tiktok_to_shopify(file_like_or_path, vendor_text: str = "", markup_pct: float = 0.0) -> pd.DataFrame:
+def convert_tiktok_to_shopify(
+    file_like_or_path,
+    vendor_text: str = "",
+    markup_pct: float = 0.0,
+    compare_at_markup_pct: float = 0.0,
+) -> pd.DataFrame:
     """Đọc CSV hoặc XLSX TikTok; gom ảnh; sinh rows chuẩn Shopify."""
     name = getattr(file_like_or_path, 'name', '')
     if name and name.lower().endswith('.csv'):
@@ -397,6 +415,9 @@ def convert_tiktok_to_shopify(file_like_or_path, vendor_text: str = "", markup_p
         if not has_var:
             gprice = g0.get(price_col, np.nan) if price_col else np.nan
             gsku   = g0.get(sku_col, "") if sku_col else ""
+            vprice = round(parse_price(gprice) * (1 + float(markup_pct)/100.0), 2) if pd.notna(gprice) else ""
+            vcompare = calc_compare_at(vprice, compare_at_markup_pct)
+
             row = base_row()
             row.update({
                 "Title": title,
@@ -404,7 +425,8 @@ def convert_tiktok_to_shopify(file_like_or_path, vendor_text: str = "", markup_p
                 "Option1 Name": "Title",
                 "Option1 Value": "Default Title",
                 "Variant SKU": str(gsku) if pd.notna(gsku) else "",
-                "Variant Price": round(parse_price(gprice) * (1 + float(markup_pct)/100.0), 2) if pd.notna(gprice) else "",
+                "Variant Price": vprice,
+                "Variant Compare At Price": vcompare,
             })
             if images:
                 row["Image Src"] = images[0]; row["Image Position"] = 1
@@ -421,6 +443,9 @@ def convert_tiktok_to_shopify(file_like_or_path, vendor_text: str = "", markup_p
                 gprice = rr.get(price_col, np.nan) if price_col else np.nan
                 vsku = rr.get(sku_col, "")
 
+                vprice = round(parse_price(gprice) * (1 + float(markup_pct)/100.0), 2) if pd.notna(gprice) else ""
+                vcompare = calc_compare_at(vprice, compare_at_markup_pct)
+
                 row = base_row()
                 if v_index == 0:
                     row.update({"Title": title, "Body (HTML)": desc})
@@ -430,7 +455,8 @@ def convert_tiktok_to_shopify(file_like_or_path, vendor_text: str = "", markup_p
                     "Option1 Name": str(v1_name) if pd.notna(v1_name) else "Option1",
                     "Option1 Value": str(v1_value) if pd.notna(v1_value) else "Default",
                     "Variant SKU": str(vsku) if pd.notna(vsku) else "",
-                    "Variant Price": round(parse_price(gprice) * (1 + float(markup_pct)/100.0), 2) if pd.notna(gprice) else "",
+                    "Variant Price": vprice,
+                    "Variant Compare At Price": vcompare,
                 })
                 if pd.notna(v2_name) and str(v2_name).strip():
                     row["Option2 Name"] = str(v2_name)

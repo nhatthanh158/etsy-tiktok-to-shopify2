@@ -3,9 +3,9 @@ import math
 import numpy as np
 import pandas as pd
 import re
-from typing import List, Dict, Any, Iterable, Optional
+from typing import List, Dict, Any, Optional
 
-# ===== Shopify default config (khớp UI trong app.py) =====
+# ===== Shopify default config =====
 DEFAULT_PUBLISHED = False
 DEFAULT_STATUS = "draft"
 DEFAULT_INVENTORY_TRACKER = "shopify"
@@ -24,10 +24,8 @@ SHOPIFY_BASE_COLS = [
     "Image Src","Image Position","Status",
 ]
 
-# Không loại trừ biến thể nào: ta giữ Digital/PNG/PDF... nhưng để SKU trống
+# Không loại trừ biến thể nào: giữ Digital/PNG/PDF... nhưng để SKU trống
 EXCLUDE_OPTIONS = set()
-
-# Nhận diện các biến thể số (để trống SKU)
 DIGITAL_LIKE = {
     "digital download", "instant download", "printable",
     "png", "pdf", "jpg", "jpeg", "svg"
@@ -93,9 +91,9 @@ def _finalize(df_rows: List[Dict[str, Any]]) -> pd.DataFrame:
             df[k] = ""
     return df[ordered]
 
-# ====== Token matcher (để gán đúng SKU cho Option1) ======
+# ===== Token matcher (để gán đúng SKU cho Option1) =====
 TOKEN_PATTERNS = [
-    r"\b\d{1,2}\s*[tTmM]\b",                     # 6M, 12M, 2T, 3T...
+    r"\b\d{1,2}\s*[tTmM]\b",                     # 6M, 12M, 2T...
     r"\b(?:XS|S|M|L|XL|XXL|3XL|4XL)\b",          # size chữ
     r"\b\d{1,2}\s*[x×]\s*\d{1,2}\b",             # 11x14, 12 x 16...
     r"\bA\d\b",                                  # A3, A2, A1...
@@ -134,11 +132,17 @@ def convert_etsy_to_shopify(
 ) -> pd.DataFrame:
     """
     Etsy CSV:
-    - Giữ mọi biến thể (kể cả Digital/PNG/PDF...) — các biến thể số sẽ để SKU trống
-    - SKU cho biến thể vật lý: map theo Variation 1 (Option1) với token-matching
-    - Nếu có variant_price_map: set giá theo Option1 (ưu tiên exact, rồi token), fallback dùng PRICE gốc + markup
+    - Giữ mọi biến thể (kể cả Digital/PNG/PDF...) — biến thể số → SKU rỗng
+    - SKU biến thể vật lý: map theo Option1 với token-matching
+    - Nếu có variant_price_map: set giá theo Option1 (ưu tiên exact, rồi token), fallback dùng PRICE + markup
     """
     etsy = pd.read_csv(file_like_or_path, engine="python")
+
+    # 🔧 CHUẨN HOÁ HEADER → UPPERCASE để không lệch tên cột
+    etsy.columns = [str(c).strip().upper() for c in etsy.columns]
+    def getU(row, key, default=""):
+        return row.get(key, default)
+
     rows: List[Dict[str, Any]] = []
 
     # Chuẩn hoá price map
@@ -165,9 +169,9 @@ def convert_etsy_to_shopify(
         image_cols = [c for c in etsy.columns if "IMAGE" in str(c).upper()]
 
     for idx, r in etsy.iterrows():
-        title = r.get("TITLE", "")
-        desc = r.get("DESCRIPTION", "")
-        price = r.get("PRICE", "")
+        title = getU(r, "TITLE", "")
+        desc  = getU(r, "DESCRIPTION", "")
+        price = getU(r, "PRICE", "")
 
         # Lấy ảnh
         images = []
@@ -178,11 +182,11 @@ def convert_etsy_to_shopify(
         images = images[:20]
 
         # Options
-        opt1_name = r.get("VARIATION 1 NAME") or r.get("VARIATION 1 TYPE") or "Option1"
-        opt2_name = r.get("VARIATION 2 NAME") or r.get("VARIATION 2 TYPE") or ""
-        opt1_all  = split_list_field(r.get("VARIATION 1 VALUES"))
-        opt2_all  = split_list_field(r.get("VARIATION 2 VALUES"))
-        skus_all  = split_list_field(r.get("SKU"))
+        opt1_name = getU(r, "VARIATION 1 NAME") or getU(r, "VARIATION 1 TYPE") or "Option1"
+        opt2_name = getU(r, "VARIATION 2 NAME") or getU(r, "VARIATION 2 TYPE") or ""
+        opt1_all  = split_list_field(getU(r, "VARIATION 1 VALUES"))
+        opt2_all  = split_list_field(getU(r, "VARIATION 2 VALUES"))
+        skus_all  = split_list_field(getU(r, "SKU"))
 
         # Không loại trừ gì
         def keep(v): return str(v).strip().lower() not in EXCLUDE_OPTIONS
@@ -192,7 +196,7 @@ def convert_etsy_to_shopify(
         if len(opt1) == 0:
             continue
 
-        # Map SKU theo Option1 (chỉ áp cho biến thể vật lý)
+        # Map SKU theo Option1 (vật lý)
         keep_mask1 = [keep(v) for v in opt1_all] if opt1_all else []
         if opt1_all and len(skus_all) == len(opt1_all):
             skus_by_pos = [s for s, k in zip(skus_all, keep_mask1) if k]
@@ -213,8 +217,7 @@ def convert_etsy_to_shopify(
                 for tk, val in token_to_sku.items():
                     if tk in tok or tok in tk:
                         if val not in used:
-                            found = val
-                            break
+                            found = val; break
                 sku = found
             if sku is None:
                 sku = next((s for s in skus_by_pos if s not in used), "")
@@ -222,7 +225,7 @@ def convert_etsy_to_shopify(
             matched_skus.append(sku)
 
         handle = slugify(title) or f"etsy-{idx+1}"
-        vendor = vendor_text or r.get("VENDOR", "") or ""
+        vendor = (vendor_text or getU(r, "VENDOR", "") or "")
         default_price = apply_markup(price, markup_pct)
 
         def base_row():
@@ -242,19 +245,17 @@ def convert_etsy_to_shopify(
         def resolve_variant_price(option1_value: str):
             if not map_exact and not map_token:
                 return default_price
-            # exact
             if option1_value in map_exact:
                 p = map_exact[option1_value]
                 return round(p * (1 + float(markup_pct)/100.0), 2) if apply_markup_on_map else round(p, 2)
-            # token
             tok = option1_token(option1_value)
             if tok and tok in map_token:
                 p = map_token[tok]
                 return round(p * (1 + float(markup_pct)/100.0), 2) if apply_markup_on_map else round(p, 2)
-            # fallback
             return default_price
 
         v_idx = 0
+        # ---- sinh row
         for i, o1 in enumerate(opt1):
             o1_sku = matched_skus[i] if i < len(matched_skus) else ""
             vprice = resolve_variant_price(str(o1)) if variant_price_map else default_price
@@ -263,11 +264,13 @@ def convert_etsy_to_shopify(
                 for o2 in opt2:
                     row = base_row()
                     if v_idx == 0:
-                        row.update({"Title": title, "Body (HTML)": desc})
+                        # luôn có Title an toàn
+                        listing_id = getU(r, "LISTING ID", "")
+                        safe_title = title if str(title).strip() else (f"ETSY {listing_id}" if str(listing_id).strip() else handle.replace("-", " ").title())
+                        row.update({"Title": safe_title, "Body (HTML)": desc})
                         if images:
                             row["Image Src"] = images[0]; row["Image Position"] = 1
 
-                    # SKU rỗng nếu một trong hai option là digital-like
                     sku_val = "" if (is_digital_like(o1) or (opt2_name and is_digital_like(o2))) else (str(o1_sku) if o1_sku is not None else "")
 
                     row.update({
@@ -282,12 +285,13 @@ def convert_etsy_to_shopify(
             else:
                 row = base_row()
                 if v_idx == 0:
-                    row.update({"Title": title, "Body (HTML)": desc})
+                    listing_id = getU(r, "LISTING ID", "")
+                    safe_title = title if str(title).strip() else (f"ETSY {listing_id}" if str(listing_id).strip() else handle.replace("-", " ").title())
+                    row.update({"Title": safe_title, "Body (HTML)": desc})
                     if images:
                         row["Image Src"] = images[0]; row["Image Position"] = 1
 
                 sku_val = "" if is_digital_like(o1) else (str(o1_sku) if o1_sku is not None else "")
-
                 row.update({
                     "Option1 Name": str(opt1_name),
                     "Option1 Value": str(o1),

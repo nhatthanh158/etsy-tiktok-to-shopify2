@@ -2,7 +2,10 @@ import io
 import re
 import pandas as pd
 import streamlit as st
-from converter import convert_etsy_to_shopify, convert_tiktok_to_shopify
+from converter import (
+    convert_etsy_to_shopify,
+    convert_tiktok_to_shopify,
+)
 
 st.set_page_config(page_title="Etsy/TikTok → Shopify Converter", page_icon="🛒", layout="centered")
 
@@ -53,9 +56,11 @@ with st.sidebar:
     source = st.radio("Nguồn file", ["Etsy CSV", "TikTok Shop (CSV/XLSX)"])
     vendor = st.text_input("Vendor", value="")
     markup_pct = st.number_input("Markup price (%)", value=0.0, step=1.0, help="Ví dụ 10 = +10%, -10 = giảm 10%")
+    compare_at_markup_pct = st.number_input("Compare-at markup (%)", value=0.0, step=1.0,
+                                            help="Giá gạch = Giá bán × (1 + % này). Để 0 nếu không dùng.")
     st.markdown("---")
     st.subheader("💰 Variant price map (tuỳ chọn, cho Etsy)")
-    st.caption("Dán từng dòng từ ảnh bảng giá (mỗi dòng 1 biến thể):\n"
+    st.caption("Dán từng dòng (mỗi dòng 1 biến thể):\n"
                "8 x 12\" - 20 x 30cm (US$28.99)\n"
                "11 x 14\" - 27 x 35cm (US$34.99)\n"
                "Digital Download (US$11.99)\n"
@@ -97,11 +102,17 @@ if col_btn1.button("🚀 Convert", use_container_width=True, disabled=(uploaded 
                 markup_pct=markup_pct,
                 variant_price_map=variant_price_map,
                 apply_markup_on_map=apply_markup_on_map,
+                compare_at_markup_pct=compare_at_markup_pct,
             )
             base_name = (uploaded.name or "etsy").rsplit('.', 1)[0]
             out_name = f"shopify_import_from_etsy__{base_name}.csv"
         else:
-            df_out = convert_tiktok_to_shopify(uploaded, vendor_text=vendor, markup_pct=markup_pct)
+            df_out = convert_tiktok_to_shopify(
+                uploaded,
+                vendor_text=vendor,
+                markup_pct=markup_pct,
+                compare_at_markup_pct=compare_at_markup_pct,
+            )
             base_name = (uploaded.name or "tiktok").rsplit('.', 1)[0]
             out_name = f"shopify_import_from_tiktok__{base_name}.csv"
 

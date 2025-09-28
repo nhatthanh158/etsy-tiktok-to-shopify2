@@ -7,7 +7,7 @@ from converter import convert_etsy_to_shopify, convert_tiktok_to_shopify
 st.set_page_config(page_title="Etsy/TikTok → Shopify Converter", page_icon="🛒", layout="centered")
 
 st.title("🛒 Etsy/TikTok → Shopify Converter")
-st.caption("Chọn nguồn dữ liệu, nhập Vendor & % Markup → Convert → Tải CSV cho Shopify")
+st.caption("Chọn nguồn file, nhập Vendor & % Markup → Convert → Tải CSV cho Shopify")
 
 # ===== Helpers =====
 def parse_price_map(text: str) -> dict:
@@ -17,6 +17,7 @@ def parse_price_map(text: str) -> dict:
       - 9 x 11\" - 23 x 28cm (31.99)
       - 11x14 : 34.99
       - A3 / 29.7 x 42cm - 35.99
+      - Digital Download (US$11.99)
     Trả về: {label: price_str}
     """
     price_map = {}
@@ -38,7 +39,7 @@ def parse_price_map(text: str) -> dict:
                 price = m2.group(1)
                 label = re.sub(r"[:\-]\s*[0-9][0-9\.,]*\s*$", "", line).strip(" -:\t")
             else:
-                # nhánh fallback: "label   số"
+                # fallback: "label   số"
                 m3 = re.search(r"(.*\S)\s+([0-9][0-9\.,]*)\s*$", line)
                 if m3:
                     label = m3.group(1).strip()
@@ -55,9 +56,10 @@ with st.sidebar:
     markup_pct = st.number_input("Markup price (%)", value=0.0, step=1.0, help="Ví dụ 10 = +10%, -10 = giảm 10%")
     st.markdown("---")
     st.subheader("💰 Variant price map (tuỳ chọn, cho Etsy)")
-    st.caption("Dán từng dòng từ ảnh bảng giá:\n"
+    st.caption("Dán từng dòng từ ảnh bảng giá (mỗi dòng 1 biến thể):\n"
                "8 x 12\" - 20 x 30cm (US$28.99)\n"
                "11 x 14\" - 27 x 35cm (US$34.99)\n"
+               "Digital Download (US$11.99)\n"
                "A3 / 29.7 x 42cm - 35.99")
     price_map_text = st.text_area("Dán bảng giá theo biến thể (Option1)", height=180,
                                   placeholder='8 x 12" - 20 x 30cm (US$28.99)')

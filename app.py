@@ -7,14 +7,13 @@ from converter import convert_etsy_to_shopify, convert_tiktok_to_shopify
 st.set_page_config(page_title="Etsy/TikTok → Shopify Converter", page_icon="🛒", layout="centered")
 
 st.title("🛒 Etsy/TikTok → Shopify Converter")
-st.caption("Chọn nguồn file, nhập Vendor & % Markup → Convert → Tải CSV cho Shopify")
+st.caption("Chọn nguồn dữ liệu, nhập Vendor & % Markup → Convert → Tải CSV cho Shopify")
 
 # ===== Helpers =====
 def parse_price_map(text: str) -> dict:
     """
     Nhận các format dòng:
       - 8 x 12\" - 20 x 30cm (US$28.99)
-      - 9 x 11\" - 23 x 28cm (31.99)
       - 11x14 : 34.99
       - A3 / 29.7 x 42cm - 35.99
       - Digital Download (US$11.99)

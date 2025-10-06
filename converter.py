@@ -27,7 +27,7 @@ SHOPIFY_BASE_COLS = [
 # Không loại trừ biến thể nào: giữ Digital/PNG/PDF... nhưng để SKU trống
 EXCLUDE_OPTIONS = set()
 DIGITAL_LIKE = {
-    "digital download", "instant download", "printable",
+    "digital download", "instant download", "printable", "digital file",
     "png", "pdf", "jpg", "jpeg", "svg"
 }
 def is_digital_like(v) -> bool:
